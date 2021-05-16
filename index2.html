@@ -29,7 +29,7 @@
       this.width = width;
       this.height = height;
       this.range = range;
-      this.position = 0;
+      this.position = null;
       this.texture = new THREE.DataTexture( new Uint8Array( width * height * 3 ), width, height, THREE.RGBFormat );
       this.data = this.texture.image.data
     }
@@ -83,7 +83,7 @@
 
 
         worker_busy = true;
-        worker.postMessage({"func":"slice", "sab":sab, "w":texturew, "h":textureh, "range": 100, "price":4000})
+        worker.postMessage({"func":"slice", "sab":sab, "w":texturew, "h":textureh, "range": 100, "price":4000, "pixeltime": pixelTime})
 
 
     }
@@ -92,14 +92,27 @@
       //slice.noise();
       //slice.sampleData();
 
-      let position = new THREE.Vector2();
-      position.x = domCanvas.textureWidth()*offset-this.width;
-      position.y = 0;
-      renderer.copyTextureToTexture( position, this.texture, domCanvas.texture() );
-      //renderer.copyTextureToTexture( position, slice.texture, dataTexture );
-      //renderer.copyTextureToTexture( position, this.texture, domCanvas.texture() );
-    }
+      if (this.position) {
+        let newPosX = (domCanvas.textureWidth() * offset - this.width) | 0;
+        let px = newPosX
+        while (px > this.position.x) {
+          let vec = new THREE.Vector2();
+          vec.x = px;
+          vec.y = 0;
+          px = px - this.width;
+          renderer.copyTextureToTexture(vec, this.texture, domCanvas.texture());
+        }
+        this.position.x = newPosX;
+      }
+      else {
 
+        let position = new THREE.Vector2();
+        position.x = (domCanvas.textureWidth() * offset - this.width) | 0;
+        position.y = 0;
+        renderer.copyTextureToTexture(position, this.texture, domCanvas.texture());
+        this.position = position;
+      }
+    }
   }
 
   class DomCanvas {
@@ -196,7 +209,7 @@
 
 
         worker_busy = true;
-        worker.postMessage({"func":"canvas", "sab":sab,"w":texturew,"h":textureh,"range":this.range,"price":4000})
+        worker.postMessage({"func":"canvas", "sab":sab,"w":texturew,"h":textureh,"range":this.range,"price":4000, "pixeltime": pixelTime})
       }
 
     }
@@ -218,22 +231,9 @@
 
 
         worker_busy = true;
-        worker.postMessage({"func":"canvas", "sab":sab,"w":texturew,"h":textureh,"range":this.range,"price":4000})
+        worker.postMessage({"func":"canvas", "sab":sab,"w":texturew,"h":textureh,"range":this.range,"price":4000, "pixeltime": pixelTime})
       }
     }
-
-    /*zoomOut() {
-      const texture = this.mesh.material.alphaMap;
-      const data = texture.image.data;
-      const texturew = texture.image.width;
-      const textureh = this.range = texture.image.height + 4;
-
-      texture.image.data = new Uint8Array( texturew * textureh * 3 );
-      texture.image.height = textureh;
-      texture.needsUpdate = true;
-      this.noise();
-      this.mesh.material.alphaMap = texture;
-    }*/
 
     updateDisplay() {
       this.mesh.material.alphaMap.needsUpdate = true;
@@ -273,7 +273,6 @@
   var otherImage;
   var textureAlpha;
   var basicMaterial;
-  var textureData;
 
   var slice;
   var domCanvas;
@@ -294,7 +293,7 @@
     let w = window.innerWidth;
     let h = window.innerHeight;
 
-    camera = new THREE.OrthographicCamera(-w/ 2, w/ 2, h/2, -h/2, 1, 100000 );
+    camera = new THREE.OrthographicCamera(-w/ 2, (w/ 2)-5, h/2, -h/2, 1, 100000 );
     camera.position.z = -100;
 
     cameraCube = new THREE.PerspectiveCamera( 60, window.innerWidth / window.innerHeight, 1, 100000 );
@@ -307,15 +306,19 @@
     textureAlpha = new THREE.TextureLoader().load("images/alpha.png");
     otherImage = new THREE.TextureLoader().load("images/ttn.jpg");
 
-    slice = new Slice(20,160, 411);
-    domCanvas = new DomCanvas(w, h, 5, 411)
-    domCanvas.noise()
+    slice = new Slice(1,160, 411);
+    domCanvas = new DomCanvas(w, h, 1, 411)
+    //domCanvas.noise()
     domCanvas.addToScene(scene)
+
+    screenTimeRange = 300000; // 1 minute
+    pixelTime = screenTimeRange/domCanvas.textureWidth();
 
     worker.onmessage = (e) => {
       if (e.data && e.data.func) {
         if (e.data.func=="canvas") {
-          console.log(e.data);
+          offset = 0;
+          previousTime = null;
           domCanvas.updateDisplay();
         }
         else /*if (e.data.func == "slice")*/ {
@@ -343,47 +346,7 @@
       } );
     } );
 
-    // create a buffer with color data
 
-    const width = w;
-    const height = h / 20;
-
-    const size = width * height;
-    const data = new Uint8Array( size*3 );
-    const color = new THREE.Color( 0xffffff );
-
-    const r = Math.floor( color.r * Math.random()*255 );
-    const g = Math.floor( color.g * Math.random()*255 );
-    const b = Math.floor( color.b * Math.random()*255 );
-
-    for ( let i = 0; i < height; i ++ ) {
-
-      var liq = Math.random()*255;
-
-      for (let j=0; j<width; j++) {
-        var stride = (i * width + j) * 3;
-
-          data[stride] = 0;
-          data[stride + 1] = liq;
-          data[stride + 2] = 0;
-
-      }
-
-    }
-
-
-// used the buffer to create a DataTexture
-
-    dataTexture = new THREE.DataTexture( data, width, height, THREE.RGBFormat );
-    dataTexture.wrapS = dataTexture.wrapT = THREE.RepeatWrapping;
-    dataTexture.repeat.set(1, 1);
-
-    var boxGeometry = new THREE.PlaneGeometry(w,h,1);
-     basicMaterial = new THREE.MeshBasicMaterial({color: 0xBB00BB, transparent: true, side: THREE.FrontSide, alphaMap: textureAlpha});
-    var cube = new THREE.Mesh( boxGeometry, basicMaterial );
-    cube.position.z = -5000;
-
-    scene.add( cube );
 
 //				var path = "images/cube_skybox/";	var format = '.jpg';
     var path = "";	var format = '.png';
@@ -453,7 +416,6 @@
 
     window.addEventListener( 'resize', onWindowResize, false );
 
-
   }
 
   function onWindowResize() {
@@ -505,8 +467,7 @@
   function render() {
 
     now = new Date().getTime();
-    screenTimeRange = 60000; // 1 minute
-    pixelTime = screenTimeRange/domCanvas.width;
+
 
     countFrames = countFrames + 1;
 
@@ -540,9 +501,6 @@
 
     }
 
-    basicMaterial.alphaMap = dataTexture;
-    basicMaterial.alphaMap.offset = new THREE.Vector2(0,countFrames/2000.0); // shifting ??
-
     //domCanvas.shift(countFrames/1000.0, 0);
     if (previousTime) {
       offset = offset + (now-previousTime)/screenTimeRange;
@@ -552,11 +510,7 @@
     //slice.noise();
     slice.sampleData(domCanvas);
 
-    position = new THREE.Vector2();
-    position.x = 1000;
-    position.y = 100;
-           //renderer.copyTextureToTexture( position, slice.texture, dataTexture ); OLD CODE
-    //renderer.copyTextureToTexture( position, slice.texture, domCanvas.texture() );
+    //slice.render(domCanvas);
 
 
     var timer = 0.0001 * Date.now();
