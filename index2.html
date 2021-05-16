@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>My first three.js app</title>
+  <style>
+    body { margin: 0; }
+  </style>
+</head>
+<body>
+<script src="closure-library/closure/goog/base.js"></script>
+<script src="hello.js"></script>
+<script src="js/three.js"></script>
+<script>
+
+
+  //			if ( ! Detector.webgl ) Detector.addGetWebGLMessage();
+
+
+  let worker_busy = false;
+
+  const worker = new Worker('worker.js');
+  console.log(self.crossOriginIsolated);
+
+
+
+  class Slice {
+    constructor(width, height, range) {
+      this.width = width;
+      this.height = height;
+      this.range = range;
+      this.position = 0;
+      this.texture = new THREE.DataTexture( new Uint8Array( width * height * 3 ), width, height, THREE.RGBFormat );
+      this.data = this.texture.image.data
+    }
+
+    data() {
+      return this.data; //this.texture.image.data;
+    }
+
+    noise() {
+      let color = new THREE.Color();
+
+      color.setHex( Math.random() * 0xffffff );
+
+      const r = Math.floor( color.r * 255 );
+      const g = Math.floor( color.g * 255 );
+      const b = Math.floor( color.b * 255 );
+
+      const data = this.texture.image.data;
+
+      for ( let i = 0; i < this.width*this.height; i ++ ) {
+
+        const stride = i * 3;
+
+        data[ stride ] = r;
+        data[ stride + 1 ] = g;
+        data[ stride + 2 ] = b;
+
+      }
+    }
+
+    sampleData(domCanvas) {
+
+        const textureh = this.height = domCanvas.range; //texture.image.height - 2;
+        const texturew = this.width;
+
+        //this.width = texturew;
+        //this.height = textureh;
+
+
+        let sab = new SharedArrayBuffer( texturew * textureh * 3 );
+        this.texture.image.data = new Uint8Array( sab );
+        this.texture.image.height = textureh;
+
+        //this.noise();
+
+        //let position = new THREE.Vector2();
+        //position.x = 0;
+        //position.y = 0;
+        //renderer.copyTextureToTexture( position, slice.texture, dataTexture );
+       // renderer.copyTextureToTexture( position, this.texture, domCanvas.texture() );
+
+
+        worker_busy = true;
+        worker.postMessage({"func":"slice", "sab":sab, "w":texturew, "h":textureh, "range": 100, "price":4000})
+
+
+    }
+
+    render(domCanvas) {
+      //slice.noise();
+      //slice.sampleData();
+
+      let position = new THREE.Vector2();
+      position.x = domCanvas.textureWidth()*offset-this.width;
+      position.y = 0;
+      renderer.copyTextureToTexture( position, this.texture, domCanvas.texture() );
+      //renderer.copyTextureToTexture( position, slice.texture, dataTexture );
+      //renderer.copyTextureToTexture( position, this.texture, domCanvas.texture() );
+    }
+
+  }
+
+  class DomCanvas {
+
+    // window width, height in pixels (also worldcoordinates here),
+    // range of data (in ticks), equal to height of texture, range should be an odd number, zooming in out +2/-2
+    constructor(width, height, timeres, range) {
+      this.width = width;
+      this.height = height;
+      this.timeres = timeres;
+      this.range = range;
+      /*this.textWidth = width/5;
+      this.textHeight = range;
+      this.texture = new THREE.DataTexture( new Uint8Array( this.textWidth * this.textHeight * 3 ), this.textWidth,this. textHeight, THREE.RGBFormat );
+      this.texture.wrapS = this.texture.wrapT = THREE.RepeatWrapping;
+      this.texture.repeat.set(1, 1);
+      this.data = this.texture.image.data
+      this.geometry = new THREE.PlaneGeometry(width, height, 1);
+      this.material = new THREE.MeshBasicMaterial({color: 0xFFFFFF, transparent: true, side: THREE.FrontSide, alphaMap: this.texture});*/
+      this.buildMesh();
+
+    }
+
+    buildMesh() {
+      const texturew = this.width/this.timeres | 0;
+      const textureh = this.range;
+      let sab = new SharedArrayBuffer( texturew * textureh * 3 );
+      worker.postMessage(sab);
+      let texture = new THREE.DataTexture( new Uint8Array( sab ), texturew, textureh, THREE.RGBFormat );
+      texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+      texture.repeat.set(1, 1);
+
+      const geometry = new THREE.PlaneGeometry(this.width, this.height, 1);
+      const material = new THREE.MeshBasicMaterial({color: 0xFFFFFF, transparent: true, side: THREE.FrontSide, alphaMap: texture});
+
+      this.mesh = new THREE.Mesh(geometry, material);
+      this.mesh.position.z = -4999;
+
+    }
+
+    noise() {
+
+      const texture = this.mesh.material.alphaMap;
+      const data = texture.image.data;
+      const texturew = texture.image.width;
+      const textureh = texture.image.height;
+
+      const color = new THREE.Color( 0xffffff );
+
+      const r = Math.floor( color.r * Math.random()*255 );
+      const g = Math.floor( color.g * Math.random()*255 );
+      const b = Math.floor( color.b * Math.random()*255 );
+
+      var liq = 0;
+      for ( let i = 0; i < texturew; i ++ ) {
+
+        if (i%1==0) liq = Math.random()*255;
+
+        for (let j=0; j < textureh; j++) {
+          var stride = (j * texturew + i) * 3;
+
+          if (j%2==1) {
+            data[stride] = 0;
+            data[stride + 1] = liq;
+            data[stride + 2] = 0;
+          }
+        }
+      }
+    }
+
+    addToScene(scene) {
+      scene.add(this.mesh);
+    }
+
+    shift(dx, dy) {
+      this.mesh.material.alphaMap.offset = new THREE.Vector2(dx, dy);
+    }
+
+    zoomIn(deltaY) {
+
+      this.range = this.range - 4;
+      if (!worker_busy) {
+        const texture = this.mesh.material.alphaMap;
+        const data = texture.image.data;
+        const texturew = texture.image.width;
+        const textureh = this.range; //texture.image.height - 2;
+
+        let sab = new SharedArrayBuffer( texturew * textureh * 3 );
+        texture.image.data = new Uint8Array( sab );
+        texture.image.height = textureh;
+        //texture.needsUpdate = true;
+        //this.noise();
+        this.mesh.material.alphaMap = texture;
+
+
+        worker_busy = true;
+        worker.postMessage({"func":"canvas", "sab":sab,"w":texturew,"h":textureh,"range":this.range,"price":4000})
+      }
+
+    }
+
+    zoomOut() {
+      this.range = this.range + 4;
+      if (!worker_busy) {
+        const texture = this.mesh.material.alphaMap;
+        const data = texture.image.data;
+        const texturew = texture.image.width;
+        const textureh = this.range; //texture.image.height - 2;
+
+        let sab = new SharedArrayBuffer( texturew * textureh * 3 );
+        texture.image.data = new Uint8Array( sab );
+        texture.image.height = textureh;
+        //texture.needsUpdate = true;
+        //this.noise();
+        this.mesh.material.alphaMap = texture;
+
+
+        worker_busy = true;
+        worker.postMessage({"func":"canvas", "sab":sab,"w":texturew,"h":textureh,"range":this.range,"price":4000})
+      }
+    }
+
+    /*zoomOut() {
+      const texture = this.mesh.material.alphaMap;
+      const data = texture.image.data;
+      const texturew = texture.image.width;
+      const textureh = this.range = texture.image.height + 4;
+
+      texture.image.data = new Uint8Array( texturew * textureh * 3 );
+      texture.image.height = textureh;
+      texture.needsUpdate = true;
+      this.noise();
+      this.mesh.material.alphaMap = texture;
+    }*/
+
+    updateDisplay() {
+      this.mesh.material.alphaMap.needsUpdate = true;
+    }
+
+    texture() {
+      return this.mesh.material.alphaMap;
+    }
+
+    textureWidth() {
+      return this.mesh.material.alphaMap.image.width;
+    }
+  }
+
+  var container;
+
+  var camera, scene, renderer;
+  var cameraCube, sceneCube;
+
+  var mesh, lightMesh, geometry;
+  var spheres = [];
+
+  var directionalLight, pointLight;
+
+  var mouseX = 0, mouseY = 0, mouseZ = 0;
+
+  var windowHalfX = window.innerWidth / 2;
+  var windowHalfY = window.innerHeight / 2;
+
+  var countFrames = 0;
+  var textureCube;
+  var geometry = 0;
+
+  var posX = 0
+  var prevY = Math.random() * 10000 - 500;
+
+  var otherImage;
+  var textureAlpha;
+  var basicMaterial;
+  var textureData;
+
+  var slice;
+  var domCanvas;
+  var previousTime;
+  var offset=0;
+
+  document.addEventListener( 'mousemove', onDocumentMouseMove, false );
+  document.addEventListener( 'wheel', onDocumentMouseWheel, false);
+
+  init();
+  animate();
+
+  function init() {
+
+    container = document.createElement( 'div' );
+    document.body.appendChild( container );
+
+    let w = window.innerWidth;
+    let h = window.innerHeight;
+
+    camera = new THREE.OrthographicCamera(-w/ 2, w/ 2, h/2, -h/2, 1, 100000 );
+    camera.position.z = -100;
+
+    cameraCube = new THREE.PerspectiveCamera( 60, window.innerWidth / window.innerHeight, 1, 100000 );
+
+    scene = new THREE.Scene();
+    //sceneCube = new THREE.Scene();
+
+    geometry = new THREE.SphereGeometry( 100, 32, 32 );
+
+    textureAlpha = new THREE.TextureLoader().load("images/alpha.png");
+    otherImage = new THREE.TextureLoader().load("images/ttn.jpg");
+
+    slice = new Slice(20,160, 411);
+    domCanvas = new DomCanvas(w, h, 5, 411)
+    domCanvas.noise()
+    domCanvas.addToScene(scene)
+
+    worker.onmessage = (e) => {
+      if (e.data && e.data.func) {
+        if (e.data.func=="canvas") {
+          console.log(e.data);
+          domCanvas.updateDisplay();
+        }
+        else /*if (e.data.func == "slice")*/ {
+          slice.render(domCanvas);
+        }
+      }
+
+      worker_busy = false;
+    };
+
+    const loader = new THREE.FontLoader();
+
+     new THREE.FontLoader().load( '../helvetiker_regular.typeface.js', function ( font ) {
+
+      const geometry = new THREE.TextGeometry( 'Hello three.js!', {
+        font: font,
+        size: 80,
+        height: 5,
+        curveSegments: 12,
+        bevelEnabled: true,
+        bevelThickness: 10,
+        bevelSize: 8,
+        bevelOffset: 0,
+        bevelSegments: 5
+      } );
+    } );
+
+    // create a buffer with color data
+
+    const width = w;
+    const height = h / 20;
+
+    const size = width * height;
+    const data = new Uint8Array( size*3 );
+    const color = new THREE.Color( 0xffffff );
+
+    const r = Math.floor( color.r * Math.random()*255 );
+    const g = Math.floor( color.g * Math.random()*255 );
+    const b = Math.floor( color.b * Math.random()*255 );
+
+    for ( let i = 0; i < height; i ++ ) {
+
+      var liq = Math.random()*255;
+
+      for (let j=0; j<width; j++) {
+        var stride = (i * width + j) * 3;
+
+          data[stride] = 0;
+          data[stride + 1] = liq;
+          data[stride + 2] = 0;
+
+      }
+
+    }
+
+
+// used the buffer to create a DataTexture
+
+    dataTexture = new THREE.DataTexture( data, width, height, THREE.RGBFormat );
+    dataTexture.wrapS = dataTexture.wrapT = THREE.RepeatWrapping;
+    dataTexture.repeat.set(1, 1);
+
+    var boxGeometry = new THREE.PlaneGeometry(w,h,1);
+     basicMaterial = new THREE.MeshBasicMaterial({color: 0xBB00BB, transparent: true, side: THREE.FrontSide, alphaMap: textureAlpha});
+    var cube = new THREE.Mesh( boxGeometry, basicMaterial );
+    cube.position.z = -5000;
+
+    scene.add( cube );
+
+//				var path = "images/cube_skybox/";	var format = '.jpg';
+    var path = "";	var format = '.png';
+    var urls = [
+      path + 'px' + format, path + 'nx' + format,
+      path + 'py' + format, path + 'ny' + format,
+      path + 'pz' + format, path + 'ttn.jpg'
+    ];
+
+
+    textureCube = new THREE.CubeTextureLoader()
+      .setPath("images/")
+      .load( urls); // THREE.CubeRefractionMapping
+
+    var material = new THREE.MeshBasicMaterial( { color: 0xCC00CC, envMap: textureCube, refractionRatio: 0.925 } );
+
+    for ( var i = 0; i < 100; i ++ ) {
+
+      var mesh = new THREE.Mesh( geometry, material );
+
+      mesh.position.x = 5000 + posX;
+      mesh.position.y = prevY + (Math.random()-0.5) *250 ;
+      mesh.position.z =  -5000;
+
+      mesh.scale.x = mesh.scale.y = mesh.scale.z = Math.random() * 3 + 1;
+
+      posX = posX + 100;
+      prevY = mesh.position.y;
+
+      scene.add( mesh );
+
+      spheres.push( mesh );
+
+    }
+
+    // Skybox
+
+    var shader = THREE.ShaderLib[ "cube" ]
+    console.log(""+shader.uniforms);
+    shader.uniforms[ "envMap" ].value = textureCube;
+
+    //scene.background = textureCube;
+
+    /*var material = new THREE.ShaderMaterial( {
+
+        fragmentShader: shader.fragmentShader,
+        vertexShader: shader.vertexShader,
+        uniforms: shader.uniforms,
+        depthWrite: false,
+        side: THREE.BackSide
+
+      } ),
+
+
+      mesh = new THREE.Mesh( new THREE.BoxGeometry( 100, 100, 100 ), material );
+    sceneCube.add( mesh );
+*/
+    //
+
+    renderer = new THREE.WebGLRenderer();
+    //renderer.setPixelRatio( window.devicePixelRatio );
+    renderer.setSize( window.innerWidth, window.innerHeight );
+    renderer.autoClear = false;
+    container.appendChild( renderer.domElement );
+
+    //
+
+    window.addEventListener( 'resize', onWindowResize, false );
+
+
+  }
+
+  function onWindowResize() {
+
+    windowHalfX = window.innerWidth / 2,
+      windowHalfY = window.innerHeight / 2,
+
+      camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+
+    cameraCube.aspect = window.innerWidth / window.innerHeight;
+    cameraCube.updateProjectionMatrix();
+
+    renderer.setSize( window.innerWidth, window.innerHeight );
+
+  }
+
+  function onDocumentMouseMove(event) {
+    console.log("mouse");
+
+    //mouseX = ( event.clientX - windowHalfX ) * 10;
+    //mouseY = ( event.clientY - windowHalfY ) * 10;
+
+  }
+
+  function onDocumentMouseWheel(event) {
+    console.log("wheel "+event.deltaY);
+
+    //mouseZ = mouseZ - event.deltaY * 10;
+    if (event.deltaY > 0) {
+      domCanvas.zoomIn();
+    }
+    else {
+      domCanvas.zoomOut();
+    }
+
+  }
+
+  //
+
+  function animate() {
+
+    requestAnimationFrame( animate );
+
+    render();
+
+  }
+
+  function render() {
+
+    now = new Date().getTime();
+    screenTimeRange = 60000; // 1 minute
+    pixelTime = screenTimeRange/domCanvas.width;
+
+    countFrames = countFrames + 1;
+
+    if (countFrames % 10 == 0) {
+
+
+      var dy = (Math.random()-0.5)*2000;
+      var material
+
+      if (dy >= 0) {
+        material = new THREE.MeshBasicMaterial( { color: 0x00CCCC, envMap: textureCube, refractionRatio: 0.925 } );
+      }
+      else {
+        material = new THREE.MeshBasicMaterial( { color: 0xCC00CC, envMap: textureCube, refractionRatio: 0.925 } );
+      }
+
+      var mesh = new THREE.Mesh( geometry, material );
+
+      mesh.position.x = 5000 + posX;
+      mesh.position.y = prevY + dy;
+      mesh.position.z = -5000;
+
+      mesh.scale.x = mesh.scale.y = mesh.scale.z = Math.random() * 3 + 1;
+      scene.add(mesh);
+      spheres.push(mesh);
+
+      posX = posX+0;
+      prevY = mesh.position.y;
+
+
+
+    }
+
+    basicMaterial.alphaMap = dataTexture;
+    basicMaterial.alphaMap.offset = new THREE.Vector2(0,countFrames/2000.0); // shifting ??
+
+    //domCanvas.shift(countFrames/1000.0, 0);
+    if (previousTime) {
+      offset = offset + (now-previousTime)/screenTimeRange;
+      domCanvas.shift(offset, 0)
+    }
+
+    //slice.noise();
+    slice.sampleData(domCanvas);
+
+    position = new THREE.Vector2();
+    position.x = 1000;
+    position.y = 100;
+           //renderer.copyTextureToTexture( position, slice.texture, dataTexture ); OLD CODE
+    //renderer.copyTextureToTexture( position, slice.texture, domCanvas.texture() );
+
+
+    var timer = 0.0001 * Date.now();
+
+    for ( var i = 0, il = spheres.length; i < il; i ++ ) {
+
+      var sphere = spheres[ i ];
+
+      sphere.position.x = sphere.position.x - 25;
+      //sphere.position.y = 5000 * Math.sin( timer + i*1.1);
+      //sphere.position.z = 1500 * Math.sin( timer + i*1.0);
+      if (i==spheres.length-1)  {
+        var grow = Math.random()*0.01;
+        sphere.scale.x = sphere.scale.x + grow;
+        sphere.scale.y = sphere.scale.y + grow;
+        sphere.scale.z = sphere.scale.z + grow;
+      }
+    }
+
+    //camera.position.x = 0
+    //camera.position.y = 0
+    camera.position.z = 2000 + mouseZ;
+    camera.position.x += ( mouseX - camera.position.x ) * .05;
+    camera.position.y += ( - mouseY - camera.position.y ) * .05;
+
+
+    camera.lookAt( scene.position );
+    cameraCube.rotation.copy( camera.rotation );
+
+    //renderer.render( sceneCube, cameraCube );
+    renderer.render( scene, camera );
+
+    previousTime = now;
+  }
+
+
+</script>
+</body>
+</html>
