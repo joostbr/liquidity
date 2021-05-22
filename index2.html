@@ -17,9 +17,58 @@
   //			if ( ! Detector.webgl ) Detector.addGetWebGLMessage();
 
 
+  const VerticalBlurShader = {
+
+    uniforms: {
+
+      'tDiffuse': { value: null },
+      'v': { value: 1.0 / 512.0 }
+
+    },
+
+    vertexShader: /* glsl */`
+
+		varying vec2 vUv;
+
+		void main() {
+
+			vUv = uv;
+			gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+
+		}`,
+
+    fragmentShader: /* glsl */`
+
+		uniform sampler2D tDiffuse;
+		uniform float v;
+
+		varying vec2 vUv;
+
+		void main() {
+
+			vec4 sum = vec4( 0.0 );
+
+			sum += texture2D( tDiffuse, vec2( vUv.x, vUv.y - 4.0 * v ) ) * 0.051;
+			sum += texture2D( tDiffuse, vec2( vUv.x, vUv.y - 3.0 * v ) ) * 0.0918;
+			sum += texture2D( tDiffuse, vec2( vUv.x, vUv.y - 2.0 * v ) ) * 0.12245;
+			sum += texture2D( tDiffuse, vec2( vUv.x, vUv.y - 1.0 * v ) ) * 0.1531;
+			sum += texture2D( tDiffuse, vec2( vUv.x, vUv.y ) ) * 0.1633;
+			sum += texture2D( tDiffuse, vec2( vUv.x, vUv.y + 1.0 * v ) ) * 0.1531;
+			sum += texture2D( tDiffuse, vec2( vUv.x, vUv.y + 2.0 * v ) ) * 0.12245;
+			sum += texture2D( tDiffuse, vec2( vUv.x, vUv.y + 3.0 * v ) ) * 0.0918;
+			sum += texture2D( tDiffuse, vec2( vUv.x, vUv.y + 4.0 * v ) ) * 0.051;
+
+			gl_FragColor = sum;
+
+		}`
+
+  };
+
   let worker_busy = false;
 
   const worker = new Worker('worker.js');
+  const bubbleWorker = new Worker('bubbleworker.js');
+
   console.log(self.crossOriginIsolated);
 
 
@@ -83,7 +132,7 @@
 
 
         worker_busy = true;
-        worker.postMessage({"func":"slice", "sab":sab, "w":texturew, "h":textureh, "range": 100, "price":4000, "pixeltime": pixelTime})
+        worker.postMessage({"func":"slice", "sab":sab, "w":texturew, "h":textureh, "range": domCanvas.range, "price":domCanvas.midprice, "pixeltime": pixelTime})
 
 
     }
@@ -119,11 +168,12 @@
 
     // window width, height in pixels (also worldcoordinates here),
     // range of data (in ticks), equal to height of texture, range should be an odd number, zooming in out +2/-2
-    constructor(width, height, timeres, range) {
+    constructor(width, height, timeres, range, midprice) {
       this.width = width;
       this.height = height;
       this.timeres = timeres;
       this.range = range;
+      this.midprice = midprice;
       /*this.textWidth = width/5;
       this.textHeight = range;
       this.texture = new THREE.DataTexture( new Uint8Array( this.textWidth * this.textHeight * 3 ), this.textWidth,this. textHeight, THREE.RGBFormat );
@@ -147,6 +197,10 @@
 
       const geometry = new THREE.PlaneGeometry(this.width, this.height, 1);
       const material = new THREE.MeshBasicMaterial({color: 0xFFFFFF, transparent: true, side: THREE.FrontSide, alphaMap: texture});
+      /*const verticalBlurMaterial = new THREE.ShaderMaterial( VerticalBlurShader );
+      verticalBlurMaterial.depthTest = false;
+      verticalBlurMaterial.uniforms.v.value = 1/textureh;
+      verticalBlurMaterial.uniforms.tDiffuse.value = texture;*/
 
       this.mesh = new THREE.Mesh(geometry, material);
       this.mesh.position.z = -4999;
@@ -193,7 +247,7 @@
 
     zoomIn(deltaY) {
 
-      this.range = this.range - 4;
+      this.range = this.range - 8;
       if (!worker_busy) {
         const texture = this.mesh.material.alphaMap;
         const data = texture.image.data;
@@ -201,21 +255,19 @@
         const textureh = this.range; //texture.image.height - 2;
 
         let sab = new SharedArrayBuffer( texturew * textureh * 3 );
-        texture.image.data = new Uint8Array( sab );
+        //texture.image.data = new Uint8Array( sab );
         texture.image.height = textureh;
-        //texture.needsUpdate = true;
-        //this.noise();
         this.mesh.material.alphaMap = texture;
 
 
         worker_busy = true;
-        worker.postMessage({"func":"canvas", "sab":sab,"w":texturew,"h":textureh,"range":this.range,"price":4000, "pixeltime": pixelTime})
+        worker.postMessage({"func":"canvas", "sab":sab,"w":texturew,"h":textureh,"range":this.range, "price":this.midprice, "pixeltime": pixelTime})
       }
 
     }
 
     zoomOut() {
-      this.range = this.range + 4;
+      this.range = this.range + 8;
       if (!worker_busy) {
         const texture = this.mesh.material.alphaMap;
         const data = texture.image.data;
@@ -223,19 +275,39 @@
         const textureh = this.range; //texture.image.height - 2;
 
         let sab = new SharedArrayBuffer( texturew * textureh * 3 );
-        texture.image.data = new Uint8Array( sab );
+        //texture.image.data = new Uint8Array( sab );
         texture.image.height = textureh;
-        //texture.needsUpdate = true;
-        //this.noise();
         this.mesh.material.alphaMap = texture;
 
 
         worker_busy = true;
-        worker.postMessage({"func":"canvas", "sab":sab,"w":texturew,"h":textureh,"range":this.range,"price":4000, "pixeltime": pixelTime})
+        worker.postMessage({"func":"canvas", "sab":sab,"w":texturew,"h":textureh,"range":this.range,"price":this.midprice, "pixeltime": pixelTime})
       }
     }
 
-    updateDisplay() {
+    pan(deltaY) {
+
+      this.midprice = this.midprice + (deltaY / 25.0 + 0.5) | 0;
+
+      if (!worker_busy) {
+        const texture = this.mesh.material.alphaMap;
+        const data = texture.image.data;
+        const texturew = texture.image.width;
+        const textureh = this.range; //texture.image.height - 2;
+
+        let sab = new SharedArrayBuffer( texturew * textureh * 3 );
+        //texture.image.data = new Uint8Array( sab );
+        texture.image.height = textureh;
+        this.mesh.material.alphaMap = texture;
+
+
+        worker_busy = true;
+        worker.postMessage({"func":"canvas", "sab":sab,"w":texturew,"h":textureh,"range":this.range,"price":this.midprice, "pixeltime": pixelTime})
+      }
+    }
+
+    updateDisplay(sab) {
+      this.mesh.material.alphaMap.image.data = new Uint8Array( sab );
       this.mesh.material.alphaMap.needsUpdate = true;
     }
 
@@ -268,19 +340,26 @@
   var geometry = 0;
 
   var posX = 0
-  var prevY = Math.random() * 10000 - 500;
+  var prevY = 500; //Math.random() * 10000 - 500;
 
   var otherImage;
   var textureAlpha;
   var basicMaterial;
+  var verticalBlurMaterial;
 
   var slice;
   var domCanvas;
   var previousTime;
   var offset=0;
 
+  var mouseDown = false;
+  var previousMousPos = null;
+
   document.addEventListener( 'mousemove', onDocumentMouseMove, false );
   document.addEventListener( 'wheel', onDocumentMouseWheel, false);
+  document.addEventListener('mousedown', onDocumentMouseDown, false);
+  document.addEventListener('mouseup', onDocumentMouseUp, false);
+
 
   init();
   animate();
@@ -296,18 +375,21 @@
     camera = new THREE.OrthographicCamera(-w/ 2, (w/ 2)-5, h/2, -h/2, 1, 100000 );
     camera.position.z = -100;
 
-    cameraCube = new THREE.PerspectiveCamera( 60, window.innerWidth / window.innerHeight, 1, 100000 );
+    cameraCube = new THREE.PerspectiveCamera( 60, window.innerWidth / window.innerHeight, 1, 1000 );
 
     scene = new THREE.Scene();
     //sceneCube = new THREE.Scene();
 
-    geometry = new THREE.SphereGeometry( 100, 32, 32 );
+    verticalBlurMaterial = new THREE.ShaderMaterial( VerticalBlurShader );
+    verticalBlurMaterial.depthTest = false;
+
+    geometry = new THREE.SphereGeometry( 10, 32, 32 );
 
     textureAlpha = new THREE.TextureLoader().load("images/alpha.png");
     otherImage = new THREE.TextureLoader().load("images/ttn.jpg");
 
-    slice = new Slice(1,160, 411);
-    domCanvas = new DomCanvas(w, h, 1, 411)
+    slice = new Slice(1,160, 211);
+    domCanvas = new DomCanvas(w, h, 1, 211, 2500);
     //domCanvas.noise()
     domCanvas.addToScene(scene)
 
@@ -319,14 +401,48 @@
         if (e.data.func=="canvas") {
           offset = 0;
           previousTime = null;
-          domCanvas.updateDisplay();
+          domCanvas.updateDisplay(e.data.sab);
         }
-        else /*if (e.data.func == "slice")*/ {
+        else if (e.data.func == "slice") {
           slice.render(domCanvas);
         }
       }
 
       worker_busy = false;
+    };
+
+    bubbleWorker.onmessage = (e) => {
+      if (e.data && e.data.func) {
+        if (e.data.func == "bubble") {
+          console.log("TRADE");
+
+            var dy = e.data.delta;
+            var material
+
+            if (dy >= 0) {
+              material = new THREE.MeshBasicMaterial( { color: 0x00CCCC, envMap: textureCube, refractionRatio: 0.925 } );
+            }
+            else {
+              material = new THREE.MeshBasicMaterial( { color: 0xCC00CC, envMap: textureCube, refractionRatio: 0.925 } );
+            }
+
+            var mesh = new THREE.Mesh( geometry, material );
+
+            mesh.position.x = timeToWorldX(new Date().getTime()); // w/4; //5000 + posX;
+            mesh.position.y = priceToWoldY(e.data.vwap); //500 + dy;
+            mesh.position.z = -5000;
+            mesh.time = e.data.time;
+            mesh.vwap = e.data.vwap;
+
+            mesh.scale.x = mesh.scale.y = mesh.scale.z = Math.random() * 3 + 1;
+            scene.add(mesh);
+            spheres.push(mesh);
+
+            posX = posX+0;
+            prevY = mesh.position.y;
+
+        }
+      }
     };
 
     const loader = new THREE.FontLoader();
@@ -361,7 +477,8 @@
       .setPath("images/")
       .load( urls); // THREE.CubeRefractionMapping
 
-    var material = new THREE.MeshBasicMaterial( { color: 0xCC00CC, envMap: textureCube, refractionRatio: 0.925 } );
+
+    /*var material = new THREE.MeshBasicMaterial( { color: 0xCC00CC, envMap: textureCube, refractionRatio: 0.925 } );
 
     for ( var i = 0; i < 100; i ++ ) {
 
@@ -380,7 +497,7 @@
 
       spheres.push( mesh );
 
-    }
+    }*/
 
     // Skybox
 
@@ -433,8 +550,24 @@
 
   }
 
+  function onDocumentMouseDown(event) {
+    mouseDown = true;
+  }
+
+  function onDocumentMouseUp(event) {
+    mouseDown = false;
+  }
+
   function onDocumentMouseMove(event) {
-    console.log("mouse");
+
+
+    if (mouseDown) {
+      if (previousMousPos) {
+        console.log("mouse "+(event.clientY - previousMousPos.y));
+        domCanvas.pan(event.clientY - previousMousPos.y);
+      }
+    }
+    previousMousPos = { x: event.clientX, y: event.clientY};
 
     //mouseX = ( event.clientX - windowHalfX ) * 10;
     //mouseY = ( event.clientY - windowHalfY ) * 10;
@@ -456,6 +589,14 @@
 
   //
 
+  function timeToWorldX(time) {
+      return (0.5 - (new Date().getTime() - time)/screenTimeRange) * window.innerWidth;
+  }
+
+  function priceToWoldY(price) {
+    return  ((price - domCanvas.midprice)/domCanvas.range) * window.innerHeight;
+  }
+
   function animate() {
 
     requestAnimationFrame( animate );
@@ -471,7 +612,7 @@
 
     countFrames = countFrames + 1;
 
-    if (countFrames % 10 == 0) {
+    /*if (countFrames % 10 == 0) {
 
 
       var dy = (Math.random()-0.5)*2000;
@@ -497,9 +638,7 @@
       posX = posX+0;
       prevY = mesh.position.y;
 
-
-
-    }
+    }*/
 
     //domCanvas.shift(countFrames/1000.0, 0);
     if (previousTime) {
@@ -519,8 +658,8 @@
 
       var sphere = spheres[ i ];
 
-      sphere.position.x = sphere.position.x - 25;
-      //sphere.position.y = 5000 * Math.sin( timer + i*1.1);
+      sphere.position.x = timeToWorldX(sphere.time); //sphere.position.x - 25;
+      sphere.position.y = priceToWoldY(sphere.vwap); //5000 * Math.sin( timer + i*1.1);
       //sphere.position.z = 1500 * Math.sin( timer + i*1.0);
       if (i==spheres.length-1)  {
         var grow = Math.random()*0.01;
